@@ -49,7 +49,7 @@ class PomodoroApp:
         self.root.configure(bg=self.colors["bg"])
         
         # 主容器 - 使用网格布局更紧凑
-        self.main_container = tk.Frame(self.root, bg=self.colors["bg"])
+        self.main_container =   tk.Frame(self.root, bg=self.colors["bg"])
         self.main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)  # 减少上下内边距
         
         # 第1行：时间显示（移除圆环）
