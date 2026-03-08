@@ -3,6 +3,8 @@
 
 # 核心依赖
 # Tkinter是Python标准库，无需额外安装
+pymysql==1.1.0
+Pillow==10.0.0
 
 # 开发依赖（可选）
 # pyinstaller==6.16.0  # 用于打包exe文件
