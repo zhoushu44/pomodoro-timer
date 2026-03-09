@@ -45,7 +45,7 @@ class PomodoroApp:
         self.data_file = "pomodoro_data.json"
         
         # 云端同步设置（在load_data之前定义）
-        self.cloud_enabled = False
+        self.cloud_enabled = True
         self.mysql_config = {
             'host': '8.163.52.51',
             'port': 13306,
@@ -491,9 +491,15 @@ class PomodoroApp:
         # 手动完成番茄钟
         self.is_running = False
         self.pomodoro_count += 1
-        self.save_pomodoro()
-        self.today_count = self.get_today_pomodoro_count()
-        self.today_label.config(text=f"今日番茄数: {'🍅' * self.today_count}")
+        try:
+            self.save_pomodoro()
+        except Exception as e:
+            print(f"保存番茄钟失败: {str(e)}")
+        try:
+            self.today_count = self.get_today_pomodoro_count()
+            self.today_label.config(text=f"今日番茄数: {'🍅' * self.today_count if self.today_count > 0 else '暂无'}")
+        except Exception as e:
+            print(f"获取今日番茄数失败: {str(e)}")
         # 重置计时为25:00
         self.current_time = self.work_time
         self.time_label.config(text=self.format_time(self.current_time))
@@ -573,7 +579,10 @@ class PomodoroApp:
             self.save_projects()
             # 云端同步项目
             if self.cloud_enabled:
-                self.sync_project_to_cloud()
+                try:
+                    self.sync_project_to_cloud()
+                except Exception as e:
+                    print(f"同步项目到云端失败: {str(e)}")
             # 更新下拉框显示
             self.project_combobox.config(values=self.projects)
     
@@ -596,7 +605,17 @@ class PomodoroApp:
                 self.save_projects()
                 # 云端同步项目
                 if self.cloud_enabled:
-                    self.sync_project_to_cloud()
+                    try:
+                        # 从projects表中删除项目
+                        connection = self.get_db_connection()
+                        cursor = connection.cursor()
+                        delete_sql = "DELETE FROM projects WHERE name = %s"
+                        cursor.execute(delete_sql, (selected_project,))
+                        connection.commit()
+                        cursor.close()
+                        print(f"项目 '{selected_project}' 已从云端删除")
+                    except Exception as e:
+                        print(f"从云端删除项目失败: {str(e)}")
                 # 更新下拉框显示
                 self.project_combobox.config(values=self.projects)
             messagebox.showinfo("提示", f"项目 '{selected_project}' 已删除！")
@@ -641,6 +660,9 @@ class PomodoroApp:
         today = datetime.now()
         week_start = today - timedelta(days=today.weekday())
         
+        # 星期几名称
+        weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        
         # 创建表格
         tree = ttk.Treeview(stats_window, columns=["date", "count"], show="headings")
         tree.heading("date", text="日期")
@@ -653,12 +675,15 @@ class PomodoroApp:
             cursor = connection.cursor()
             
             for i in range(7):
-                date = (week_start + timedelta(days=i)).strftime("%Y-%m-%d")
+                date_obj = week_start + timedelta(days=i)
+                date_str = date_obj.strftime("%Y-%m-%d")
+                weekday_name = weekdays[i]
+                display_date = f"{date_str} ({weekday_name})"
                 sql = "SELECT SUM(count) FROM pomodoro_data WHERE date = %s"
-                cursor.execute(sql, (date,))
+                cursor.execute(sql, (date_str,))
                 result = cursor.fetchone()
                 count = result[0] if result[0] else 0
-                tree.insert("", tk.END, values=[date, count])
+                tree.insert("", tk.END, values=[display_date, count])
             
             cursor.close()
         else:
@@ -666,9 +691,12 @@ class PomodoroApp:
             data = self.load_json()
             
             for i in range(7):
-                date = (week_start + timedelta(days=i)).strftime("%Y-%m-%d")
-                count = sum(data.get(date, {}).values()) if date in data else 0
-                tree.insert("", tk.END, values=[date, count])
+                date_obj = week_start + timedelta(days=i)
+                date_str = date_obj.strftime("%Y-%m-%d")
+                weekday_name = weekdays[i]
+                display_date = f"{date_str} ({weekday_name})"
+                count = sum(data.get(date_str, {}).values()) if date_str in data else 0
+                tree.insert("", tk.END, values=[display_date, count])
     
     def show_weekly_project_stats(self):
         stats_window = tk.Toplevel(self.root)
@@ -889,29 +917,47 @@ class PomodoroApp:
         with open(self.data_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     
+    def sync_projects_from_cloud(self):
+        # 从云端同步项目列表到本地
+        if not self.cloud_enabled:
+            return
+        
+        try:
+            connection = self.get_db_connection()
+            cursor = connection.cursor()
+            
+            # 从 projects 表查询项目列表
+            sql = "SELECT name FROM projects ORDER BY name"
+            cursor.execute(sql)
+            results = cursor.fetchall()
+            
+            # 提取项目列表
+            cloud_projects = [row[0] for row in results]
+            
+            # 确保包含"默认项目"
+            if "默认项目" not in cloud_projects:
+                cloud_projects.insert(0, "默认项目")
+            
+            # 检查项目列表是否有变化
+            if cloud_projects != self.projects:
+                self.projects = cloud_projects
+                # 更新下拉框（如果已创建）
+                if hasattr(self, 'project_combobox'):
+                    self.project_combobox.config(values=self.projects)
+                    # 确保当前项目仍在列表中
+                    if hasattr(self, 'project_var') and self.current_project not in self.projects:
+                        self.current_project = "默认项目"
+                        self.project_var.set("默认项目")
+            
+            cursor.close()
+            print(f"已从云端同步项目列表: {self.projects}")
+        except Exception as e:
+            print(f"从云端同步项目列表失败: {str(e)}")
+    
     def load_data(self):
         if self.cloud_enabled:
             # 从云端读取项目列表
-            try:
-                connection = self.get_db_connection()
-                cursor = connection.cursor()
-                
-                # 查询所有不重复的项目名称
-                sql = "SELECT DISTINCT project FROM pomodoro_data ORDER BY project"
-                cursor.execute(sql)
-                results = cursor.fetchall()
-                
-                # 提取项目列表
-                self.projects = [row[0] for row in results]
-                
-                # 确保包含"默认项目"
-                if "默认项目" not in self.projects:
-                    self.projects.insert(0, "默认项目")
-                
-                cursor.close()
-            except Exception as e:
-                print(f"从云端加载项目失败: {str(e)}")
-                self.projects = ["默认项目"]
+            self.sync_projects_from_cloud()
         else:
             # 从本地JSON读取项目列表
             data = self.load_json()
@@ -931,7 +977,7 @@ class PomodoroApp:
             self.save_json(data)
     
     def sync_project_to_cloud(self):
-        # 同步项目列表到云端（通过插入一条count=0的记录）
+        # 同步项目列表到云端（使用projects表）
         if not self.cloud_enabled:
             return
         
@@ -939,18 +985,17 @@ class PomodoroApp:
             connection = self.get_db_connection()
             cursor = connection.cursor()
             
-            # 为每个项目创建一条count=0的记录（如果不存在）
-            today = datetime.now().strftime("%Y-%m-%d")
+            # 为每个项目在projects表中创建记录（如果不存在）
             for project in self.projects:
-                # 检查项目是否存在于今天的记录中
-                check_sql = "SELECT COUNT(*) FROM pomodoro_data WHERE date = %s AND project = %s"
-                cursor.execute(check_sql, (today, project))
+                # 检查项目是否存在
+                check_sql = "SELECT COUNT(*) FROM projects WHERE name = %s"
+                cursor.execute(check_sql, (project,))
                 result = cursor.fetchone()
                 
-                # 如果项目不存在，创建一条count=0的记录
+                # 如果项目不存在，创建记录
                 if result[0] == 0:
-                    insert_sql = "INSERT INTO pomodoro_data (date, project, count) VALUES (%s, %s, 0)"
-                    cursor.execute(insert_sql, (today, project))
+                    insert_sql = "INSERT INTO projects (name) VALUES (%s)"
+                    cursor.execute(insert_sql, (project,))
             
             connection.commit()
             cursor.close()
@@ -1175,6 +1220,16 @@ class PomodoroApp:
         cursor.execute("CREATE DATABASE IF NOT EXISTS pomodoro")
         cursor.execute("USE pomodoro")
         
+        # 创建 projects 表
+        create_projects_table_sql = """
+        CREATE TABLE IF NOT EXISTS projects (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL UNIQUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        """
+        cursor.execute(create_projects_table_sql)
+        
         # 创建 pomodoro_data 表
         create_table_sql = """
         CREATE TABLE IF NOT EXISTS pomodoro_data (
@@ -1187,13 +1242,22 @@ class PomodoroApp:
         """
         cursor.execute(create_table_sql)
         
+        # 确保默认项目存在
+        try:
+            cursor.execute("INSERT IGNORE INTO projects (name) VALUES ('默认项目')")
+        except Exception as e:
+            print(f"添加默认项目失败: {str(e)}")
+        
         connection.commit()
         cursor.close()
         connection.close()
     
     def get_db_connection(self):
         if not self.db_connection or not self.db_connection.open:
-            self.db_connection = pymysql.connect(**self.mysql_config)
+            # 添加时区设置，确保日期处理正确
+            config = self.mysql_config.copy()
+            config['init_command'] = "SET time_zone = '+00:00'"
+            self.db_connection = pymysql.connect(**config)
         return self.db_connection
     
     def save_pomodoro_cloud(self, date, project):
@@ -1239,7 +1303,7 @@ class PomodoroApp:
             
             cursor.close()
             
-            return result[0] if result[0] else 0
+            return int(result[0]) if result[0] else 0
             
         except Exception as e:
             print(f"从云端获取今日番茄数失败: {str(e)}")
@@ -1254,12 +1318,35 @@ class PomodoroApp:
             connection = self.get_db_connection()
             cursor = connection.cursor()
             
+            # 同步本地项目到云端
+            if "projects" in data:
+                for project in data["projects"]:
+                    # 检查项目是否存在
+                    check_sql = "SELECT COUNT(*) FROM projects WHERE name = %s"
+                    cursor.execute(check_sql, (project,))
+                    result = cursor.fetchone()
+                    
+                    # 如果项目不存在，创建记录
+                    if result[0] == 0:
+                        insert_sql = "INSERT INTO projects (name) VALUES (%s)"
+                        cursor.execute(insert_sql, (project,))
+            
+            # 同步番茄钟数据
             for date, projects in data.items():
                 if date == "projects" or date == "project_targets":
                     continue
                 
                 for project, count in projects.items():
                     if isinstance(count, int) and count > 0:
+                        # 确保项目存在于projects表
+                        check_project_sql = "SELECT COUNT(*) FROM projects WHERE name = %s"
+                        cursor.execute(check_project_sql, (project,))
+                        project_result = cursor.fetchone()
+                        
+                        if project_result[0] == 0:
+                            insert_project_sql = "INSERT INTO projects (name) VALUES (%s)"
+                            cursor.execute(insert_project_sql, (project,))
+                        
                         # 检查记录是否存在
                         check_sql = "SELECT count FROM pomodoro_data WHERE date = %s AND project = %s"
                         cursor.execute(check_sql, (date, project))
@@ -1285,11 +1372,19 @@ class PomodoroApp:
             while True:
                 if self.cloud_enabled:
                     self.sync_local_to_cloud()
+                    # 同步项目列表
+                    self.sync_projects_from_cloud()
                     # 更新今日番茄数显示
-                    today_count = self.get_today_pomodoro_count_cloud()
-                    if today_count > 0:
-                        self.today_count = today_count
-                        self.today_label.config(text=f"今日番茄数: {'🍅' * today_count}")
+                    try:
+                        today_count = self.get_today_pomodoro_count_cloud()
+                        if today_count > 0:
+                            self.today_count = today_count
+                            self.today_label.config(text=f"今日番茄数: {'🍅' * today_count}")
+                        else:
+                            self.today_count = 0
+                            self.today_label.config(text="今日番茄数: 暂无")
+                    except Exception as e:
+                        print(f"获取今日番茄数失败: {str(e)}")
                 time.sleep(60)  # 每分钟同步一次
         
         sync_thread = threading.Thread(target=sync_task, daemon=True)
