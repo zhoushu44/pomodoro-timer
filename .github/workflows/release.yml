@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install rsrc
+        run: go install github.com/akavel/rsrc@latest
+
+      - name: Generate resources
+        run: rsrc -manifest app.manifest -ico icon.ico -o rsrc.syso
+
+      - name: Build
+        run: |
+          $env:CGO_ENABLED = 0
+          go build -ldflags "-H windowsgui -s -w" -o pomodoro-timer.exe
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pomodoro-timer.exe
+          draft: false
+          prerelease: false
