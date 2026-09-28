@@ -1,0 +1,40 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# 构建输出
+dist/
+build/
+
+# 项目特定 - 数据文件（含用户数据，不应提交）
+pomodoro_data.json
+cloud_config.json
+*.syso
+
+# 敏感信息 - 云端密钥配置
+.env
+*.key
+config.json
+cloud_config.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统
+Thumbs.db
+.DS_Store
+
+# 截图/临时文件
+screenshots/
+*.png
+*.bmp
